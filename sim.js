@@ -35,9 +35,46 @@ NURSE_STATION = new Location(250, 250);
 
 BOARD = {'KITCHEN' : KITCHEN, 'MED_DEPO' : MED_DEPO, 'NURSE_STATION' : NURSE_STATION, 'WIDTH': 500, 'HEIGHT' : 500};
 
-function randrange(min, max) {
-    return Math.floor(Math.random() * (max - min)) + min;
+function xfnv1a(str) {
+    for(var i = 0, h = 2166136261 >>> 0; i < str.length; i++)
+        h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+    return function() {
+        h += h << 13; h ^= h >>> 7;
+        h += h << 3;  h ^= h >>> 17;
+        return (h += h << 5) >>> 0;
+    }
 }
+
+function sfc32(a, b, c, d) {
+    return function() {
+      a >>>= 0; b >>>= 0; c >>>= 0; d >>>= 0; 
+      var t = (a + b) | 0;
+      a = b ^ b >>> 9;
+      b = c + (c << 3) | 0;
+      c = (c << 21 | c >>> 11);
+      d = d + 1 | 0;
+      t = t + d | 0;
+      c = c + t | 0;
+      return (t >>> 0) / 4294967296;
+    }
+}
+
+class Random {
+    constructor(seed) {
+       this._seed_func = xfnv1a(seed)
+       this._rand = sfc32(this._seed_func(), this._seed_func(), this._seed_func(), this._seed_func());
+    }
+
+    randrange(min, max) {
+        return Math.floor(this._rand() * (max - min)) + min;
+    }
+
+    location(min, max) {
+        return new Location(this.randrange(min, max), this.randrange(min, max));
+    }
+}
+
+
 
 function minByKey(items, key) {
     return items.map(item => [item, key(item)])
@@ -140,7 +177,7 @@ class Nurse {
                     if (action_list.length == 0) {
                         var tag = this.current_task[1];
                         var task_time = this.clock.now - this.current_task[3];
-                        console.log("Task Complete: " + tag + " in " + task_time)
+                        console.debug("Task Complete: " + tag + " in " + task_time)
                         this.stats.log_task(tag, task_time);
                         var patient = this.current_task[0];
                         this.patient_queue = this.patient_queue.filter(p => p != patient);
@@ -179,7 +216,7 @@ class Nurse {
     choose_next_task_by_proximity() {
         var prox = this.task_queue.map(task => [task, task[2][0].distance_to(this.location)])
             .reduce((accum, task) => accum[1] < task[1] ? accum[0] : task[0], [null, Infinity])[1];
-        console.log("Proximity choice = " + prox);
+        console.debug("Proximity choice = " + prox);
     }
     
     choose_next_task_by_first() {
@@ -193,8 +230,8 @@ class Nurse {
             } else if (this.task_algo == 'proximity') {
                 this.current_task = this.choose_next_task_by_proximity();
             }
-            console.log("Choose Taask")
-            console.log(this.current_task)
+            console.debug("Choose Taask")
+            console.debug(this.current_task)
             this.task_queue = this.task_queue.filter(task => task != this.current_task);
             //console.log("New Task")
             //console.log(vars(self))
@@ -245,7 +282,7 @@ class Patient {
         this.diet.update(time)
         this.medication.update(time)
         if (this.bathroom.needed()) {
-            console.log(this.id + " requesting Bathroom");
+            console.debug(this.id + " requesting Bathroom");
             this.nurse.request(this, "bathroom", [new Action(BATHROOM_TIME, this.location, this.bathroom)])
         }
         if (this.diet.needed()) {
@@ -318,16 +355,17 @@ class Action {
 }
         
 class TimedNeed {
-    constructor(min_time, max_time, resource_location) {
+    constructor(min_time, max_time, resource_location, random) {
         this.min_time = min_time;
         this.max_time = max_time;
+        this.random = random;
+        this.resource_location = resource_location;
         this.last = 0;
         this.time_till_next = this.next();
-        this.resource_location = resource_location;
     }
     
     next() {
-        return randrange(this.min_time, this.max_time);
+        return this.random.randrange(this.min_time, this.max_time);
     }
 
     needed() {
@@ -344,25 +382,22 @@ class TimedNeed {
     }
 }
 
-function random_location(min, max) {
-    return new Location(randrange(min, max), randrange(min, max));
-}
-
 class Sim {
-    constructor(task_algo, idle_algo) {
+    constructor(task_algo, idle_algo, random) {
         this.clock = new Clock();
         this.idle_algo = idle_algo;
         this.task_algo = task_algo;
         this.stats = new Stats();
+        this.random = random;
 
         this._patients = []
         for (var i = 0; i < NUM_PATIENTS; i++) {
-            var location = random_location(0, BOARD['WIDTH'])
+            var location = this.random.location(0, BOARD['WIDTH'])
             console.log("New Patient at " + location.x + "," + location.y);
             this._patients.push(new Patient(i, null, location, [], 
-                new TimedNeed(BATHROOM_MIN, BATHROOM_MAX, location),
-                new TimedNeed(DIET_MIN, DIET_MAX, KITCHEN), 
-                new TimedNeed(MED_MIN, MED_MAX, MED_DEPO)))
+                new TimedNeed(BATHROOM_MIN, BATHROOM_MAX, location, random),
+                new TimedNeed(DIET_MIN, DIET_MAX, KITCHEN, random), 
+                new TimedNeed(MED_MIN, MED_MAX, MED_DEPO, random)))
         }
 
         this._nurses = []
@@ -416,9 +451,13 @@ class Sim {
         }
     }
 
-    print_stats() {
+    get_stats() {
+        var stats_string = ""
         var all_tasks = 0;
         var all_longer_sixty = 0;
+        function add(str) {
+            stats_string += str + "\n";
+        }
         for (var tag in this.stats.tags) {
             var tasks = this.stats.tags[tag];
             all_tasks += tasks.length;
@@ -426,13 +465,14 @@ class Sim {
             var avg_time = sum / tasks.length;
             var long_tasks = tasks.reduce((a, b) => b > 60 ? a + 1 : a, 0);
             all_longer_sixty += long_tasks;
-            console.log("Tag " + tag + " avg= " + avg_time + " long= " + long_tasks);
+            add("Tag " + tag + " avg= " + avg_time + " long= " + long_tasks);
         }
-        console.log("Total Tasks: " + all_tasks);
-        console.log("Total Task Failures(long): " + all_longer_sixty);
-        console.log("Failure Rate: " + (all_longer_sixty / all_tasks));
-        console.log("Idle: " + this.stats.idle);
-        console.log("Working: " + this.stats.working);
-        console.log("Busy: " + (this.stats.working / (this.stats.idle + this.stats.working)));
+        add("Total Tasks: " + all_tasks);
+        add("Total Task Failures(long): " + all_longer_sixty);
+        add("Failure Rate: " + (all_longer_sixty / all_tasks));
+        add("Idle: " + this.stats.idle);
+        add("Working: " + this.stats.working);
+        add("Busy: " + (this.stats.working / (this.stats.idle + this.stats.working)));
+        return stats_string;
     }
 }
