@@ -1,3 +1,5 @@
+# Copyright 2018 Thomas Stanis <tstanis@gmail.com>
+
 import datetime
 import logging
 import random
@@ -11,6 +13,7 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--algo", default="first")
+parser.add_argument("--idle_algo", default="nothing")
 parser.add_argument("--output_name", default="sim_output")
 args = parser.parse_args()
 
@@ -75,6 +78,7 @@ class Nurse:
             patient.nurse = self
         self.task_queue = []
         self.clock = clock
+        self.patient_queue = []
 
     def add_patient(self, patient):
         self.patient_list.append(patient)
@@ -108,6 +112,10 @@ class Nurse:
                         task_time = self.clock.get() - self.current_task[3]
                         #print("Task Complete: " + tag + " in " + str(task_time))
                         TASK_STATS[tag].append(task_time)
+                        patient = self.current_task[0]
+                        if patient in self.patient_queue:
+                            self.patient_queue.remove(patient)
+                        self.patient_queue.append(patient)
                         self.decide_next_task()
                     
             else:
@@ -116,7 +124,23 @@ class Nurse:
             STATS['idle'] += 1
             if self.task_queue:
                 self.current_task = self.task_queue.pop(0)
+            else:
+                self.do_idle()
     
+    def do_idle(self):
+        if args.idle_algo == 'move_towards_least_seen':
+            if self.patient_queue:
+                self.move_to(self.patient_queue[0].location)
+        elif args.idle_algo == 'move_to_nurse_station':
+            self.move_to(NURSE_STATION)
+        elif args.idle_algo == 'omniscient':
+            closest = min(self.patient_list, key=lambda p: p.time_till_next_need())
+            self.move_to(closest.next_need_location())
+        #elif args.idle_algo == 'move_near_depos':
+            
+
+
+
     def choose_next_task_by_proximity(self):
         closest_task = min(self.task_queue, key=lambda task: task[2][0].distance_to(self.location))
         return closest_task
@@ -190,6 +214,15 @@ class Patient:
         print("\tDiet " + str(self.diet.time_till_next))
         print("\tMeds " + str(self.medication.time_till_next))
 
+    def next_need(self):
+        return min([self.bathroom, self.medication, self.diet], key=lambda n: n.time_till_next)
+
+    def time_till_next_need(self):
+        return self.next_need().time_till_next
+
+    def next_need_location(self):
+        return self.next_need().resource_location
+
     def to_dict(self):
         return {
             "id": self.id, 
@@ -220,11 +253,12 @@ class Action:
                 self.need.fullfill()
         
 class TimedNeed:
-    def __init__(self, min_time, max_time):
+    def __init__(self, min_time, max_time, resource_location):
         self.min_time = min_time
         self.max_time = max_time
         self.last = 0
         self.time_till_next = self.next()
+        self.resource_location = resource_location
     
     def next(self):
         return random.randrange(self.min_time, self.max_time)
@@ -258,8 +292,11 @@ clock = Clock()
 
 patients = []
 for i in range(0, NUM_PATIENTS):
-    patients.append(Patient(i, None, random_location(0, BOARD['WIDTH']), [], TimedNeed(BATHROOM_MIN, BATHROOM_MAX),
-        TimedNeed(DIET_MIN, DIET_MAX), TimedNeed(MED_MIN, MED_MAX)))
+    location = random_location(0, BOARD['WIDTH'])
+    patients.append(Patient(i, None, location, [], 
+        TimedNeed(BATHROOM_MIN, BATHROOM_MAX, location),
+        TimedNeed(DIET_MIN, DIET_MAX, KITCHEN), 
+        TimedNeed(MED_MIN, MED_MAX, MED_DEPO)))
 
 nurses = []
 for i in range(0, NUM_NURSES):
@@ -297,7 +334,7 @@ for j in range(0, SIM_LENGTH):
     #     nurse.print_state()
     
 f.write("]")
-print "STATS!"
+print("STATS!")
 all_longer_sixty = 0
 all_tasks = 0
 for key in TASK_STATS.keys():
@@ -309,11 +346,11 @@ for key in TASK_STATS.keys():
     longer = sum(np.array(TASK_STATS[key]) > 60)
     all_longer_sixty += longer
     print("LONGER THAN 60: " + str(longer))
-print "Total Tasks: " + str(all_tasks)
-print "Total Task Failures: " + str(all_longer_sixty)
-print "Failure Rate: " + str(all_longer_sixty / (float(all_tasks)))
+print("Total Tasks: " + str(all_tasks))
+print("Total Task Failures: " + str(all_longer_sixty))
+print("Failure Rate: " + str(all_longer_sixty / (float(all_tasks))))
 idle = STATS["idle"]
 working = STATS["working"]
-print "Idle: " + str(idle)
-print "Working: " + str(working)
-print "Busy: " + str(working / float(idle + working))
+print("Idle: " + str(idle))
+print("Working: " + str(working))
+print("Busy: " + str(working / float(idle + working)))
