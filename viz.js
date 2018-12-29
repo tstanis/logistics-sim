@@ -1,18 +1,17 @@
 // Copyright 2018 Thomas Stanis <tstanis@gmail.com>
 
-var canvas1 = document.getElementById('sim_canvas1');
-var canvas2 = document.getElementById('sim_canvas2');
-var ctx1 = canvas1.getContext('2d');
-var ctx2 = canvas2.getContext('2d');
-var sim1 = new Sim('first', 'move_towards_least_seen')
-var sim2 = new Sim('proximity', 'omniscient')
+var canvas = [document.getElementById('sim_canvas1'), document.getElementById('sim_canvas2'), document.getElementById('sim_canvas3')];
+var output = [document.getElementById('output1'), document.getElementById('output2'), document.getElementById('output3')];
+var ctx = canvas.map(c => c.getContext('2d'))
+var randSeed = 'foo';
+var random = canvas.map(c => new Random(randSeed));
+var sim = [ new Sim('first', 'move_towards_least_seen', random[0]), 
+            new Sim('proximity', 'omniscient', random[1]), 
+            new Sim('proximity', 'move_to_nurse_station', random[2])];
 
-current_frame1 = 0
-current_frame2 = 0
-canvas1.width = sim1.width
-canvas1.height = sim1.height
-canvas2.width = sim2.width
-canvas2.height = sim2.height
+
+var current_frame = canvas.map(c => 0);
+canvas.map(c => {c.width = sim[0].width, c.height = sim[0].height});
 
 ANIMATION_RATE = 0.3
 MAX_FRAMES = 1000
@@ -26,12 +25,13 @@ function capAndScale(scalar, domain, scale) {
 }
 
 function drawFrame() {
-    current_frame1 = draw(ctx1, canvas1, sim1, current_frame1)
-    current_frame2 = draw(ctx2, canvas2, sim2, current_frame2)
+    for (var i = 0; i < canvas.length; i++) {
+        current_frame[i] = draw(ctx[i], canvas[i], sim[i], current_frame[i], output[i])
+    }
     window.requestAnimationFrame(drawFrame);
 }
 
-function draw(ctx, canvas, sim, current_frame) {
+function draw(ctx, canvas, sim, current_frame, output) {
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     //console.log("---Sim " + canvas + "---");
     sim.sim_next_frame(Math.floor(current_frame));
@@ -76,8 +76,12 @@ function draw(ctx, canvas, sim, current_frame) {
     current_frame += ANIMATION_RATE
     if(current_frame >= MAX_FRAMES) {
         console.log("====Stats for " + canvas.id);
-        sim.print_stats();
+        output.innerText = sim.get_stats();
+        console.log(output);
         current_frame = 0
+    }
+    if(Math.floor(current_frame % 10) == 0) {
+        output.innerText = sim.get_stats();
     }
     return current_frame
 }
